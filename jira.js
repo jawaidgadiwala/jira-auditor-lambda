@@ -24,7 +24,7 @@ async function getWorklogUpdates(updatedSince) {
       headers: jiraHeaders,
       params: {
         jql: `worklogDate >= "${formattedDate}"`,
-        fields: "summary,comment,worklog,status,development",
+        fields: "summary,comment,worklog,status,development,project",
         expand: "changelog",
         maxResults: 1000,
       },
@@ -53,7 +53,7 @@ async function getStatusTransitions(updatedSince) {
       headers: jiraHeaders,
       params: {
         jql: `status changed to ("Done", "Ready for QA") after "${formattedDate}"`,
-        fields: "summary,status,development",
+        fields: "summary,status,development,project",
         expand: "changelog",
         maxResults: 1000,
       },
@@ -63,6 +63,24 @@ async function getStatusTransitions(updatedSince) {
   } catch (error) {
     console.error(
       "Error fetching Jira status transitions:",
+      error.response ? error.response.data : error.message
+    );
+    throw error;
+  }
+}
+
+async function getProjectLead(projectKey) {
+  try {
+    const response = await axios.get(
+      `${JIRA_URL}/rest/api/3/project/${projectKey}`,
+      {
+        headers: jiraHeaders,
+      }
+    );
+    return response.data.lead.emailAddress;
+  } catch (error) {
+    console.error(
+      "Error fetching project lead:",
       error.response ? error.response.data : error.message
     );
     throw error;
@@ -114,6 +132,7 @@ function checkStatusConditions(issues) {
 module.exports = {
   getWorklogUpdates,
   getStatusTransitions,
+  getProjectLead,
   checkWorklogConditions,
   checkStatusConditions,
 };

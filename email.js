@@ -4,13 +4,33 @@ const { isDebugMode } = require("./utils");
 
 const ses = new AWS.SES({ region: process.env.AWS_REGION });
 
-const { SES_EMAIL_FROM, SES_EMAIL_TO } = process.env;
+const { SES_EMAIL_FROM, SES_EMAIL_BCC, SES_EMAIL_TO } = process.env;
 
-async function sendEmail(alerts) {
+function validateEnvVariables() {
+  if (!SES_EMAIL_FROM) {
+    throw new Error("SES_EMAIL_FROM is not defined in .env file");
+  }
+
+  if (!SES_EMAIL_BCC) {
+    throw new Error("SES_EMAIL_BCC is not defined in .env file");
+  }
+
+  const bccAddresses = SES_EMAIL_BCC.split(",").map((email) => email.trim());
+  if (bccAddresses.length === 0) {
+    throw new Error("SES_EMAIL_BCC must contain at least one email address");
+  }
+
+  return bccAddresses;
+}
+
+async function sendEmail(alerts, recipientEmail) {
+  const bccAddresses = validateEnvVariables();
+
   const params = {
     Source: SES_EMAIL_FROM,
     Destination: {
-      ToAddresses: [SES_EMAIL_TO],
+      ToAddresses: [recipientEmail],
+      BccAddresses: bccAddresses,
     },
     Message: {
       Subject: {

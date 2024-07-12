@@ -2,12 +2,16 @@ const { getLastRunTime, updateLastRunTime } = require("./s3");
 const {
   getWorklogUpdates,
   getStatusTransitions,
+  getProjectLead,
   checkWorklogConditions,
   checkStatusConditions,
 } = require("./jira");
 const { sendEmail, logAlerts } = require("./email");
 const { DateTime } = require("luxon");
 const { isDebugMode } = require("./utils");
+require("dotenv").config();
+
+const { SES_EMAIL_TO } = process.env;
 
 exports.handler = async (event, context) => {
   try {
@@ -29,10 +33,28 @@ exports.handler = async (event, context) => {
     const alerts = [...worklogAlerts, ...statusAlerts];
 
     if (alerts.length > 0) {
-      if (isDebugMode()) {
-        logAlerts(alerts);
+      if (SES_EMAIL_TO) {
+        // Send email to the fixed recipient
+        if (isDebugMode()) {
+          logAlerts(alerts);
+        } else {
+          await sendEmail(alerts, SES_EMAIL_TO);
+        }
       } else {
-        await sendEmail(alerts);
+        // Send email to project lead
+        const projectKeys = new Set(
+          alerts
+            .map((alert) => alert.project && alert.project.key)
+            .filter(Boolean)
+        );
+        for (const projectKey of projectKeys) {
+          const projectLeadEmail = await getProjectLead(projectKey);
+          if (isDebugMode()) {
+            logAlerts(alerts);
+          } else {
+            await sendEmail(alerts, projectLeadEmail);
+          }
+        }
       }
     }
 
@@ -43,10 +65,10 @@ exports.handler = async (event, context) => {
       body: JSON.stringify("Script executed successfully!"),
     };
   } catch (error) {
-    console.error("Error in handler:", error);
+    console.error("Error in handler:", error.message);
     return {
       statusCode: 500,
-      body: JSON.stringify("Internal Server Error"),
+      body: JSON.stringify(`Internal Server Error: ${error.message}`),
     };
   }
 };
