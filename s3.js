@@ -40,7 +40,7 @@ async function getLastRunTime() {
 async function updateLastRunTime(currentTime) {
   const body = JSON.stringify({ last_run: currentTime.toISO() });
   if (isDebugMode()) {
-    // await fs.writeFile(S3_KEY, body, "utf8");
+    await fs.writeFile(S3_KEY, body, "utf8");
   } else {
     const command = new PutObjectCommand({
       Bucket: S3_BUCKET,

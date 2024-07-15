@@ -108,6 +108,43 @@ async function getDevelopmentData(issueId) {
   }
 }
 
+async function getAllWorklogs(issueId) {
+  try {
+    let allWorklogs = [];
+    let startAt = 0;
+    let maxResults = 100;
+
+    while (true) {
+      const response = await axios.get(
+        `${JIRA_URL}/rest/api/3/issue/${issueId}/worklog`,
+        {
+          headers: jiraHeaders,
+          params: {
+            startAt,
+            maxResults,
+          },
+        }
+      );
+      allWorklogs = allWorklogs.concat(response.data.worklogs);
+      if (
+        response.data.startAt + response.data.maxResults >=
+        response.data.total
+      ) {
+        break;
+      }
+      startAt += maxResults;
+    }
+
+    return allWorklogs;
+  } catch (error) {
+    console.error(
+      `Error fetching all worklogs for issue ${issueId}:`,
+      error.response ? error.response.data : error.message
+    );
+    return []; // Return empty array in case of error
+  }
+}
+
 async function checkStatusConditions(issues) {
   const alerts = [];
   console.log("Checking status conditions...");
@@ -142,16 +179,26 @@ async function checkStatusConditions(issues) {
   return alerts;
 }
 
-function checkWorklogConditions(issues, updatedSince) {
+async function checkWorklogConditions(issues, updatedSince) {
   const alerts = [];
   const updatedSinceDateTime = DateTime.fromISO(updatedSince);
   console.log("Checking worklog conditions...");
 
-  issues.forEach((issue) => {
-    const { key, fields } = issue;
+  for (const issue of issues) {
+    const { id, key, fields } = issue;
     const { worklog } = fields;
 
     console.log(`Processing issue ${key} with worklogs...`);
+
+    const allWorklogs = await getAllWorklogs(id);
+    const totalTimeSpentSeconds = allWorklogs.reduce(
+      (acc, log) => acc + log.timeSpentSeconds,
+      0
+    );
+
+    if (totalTimeSpentSeconds > 57600) {
+      alerts.push(`Issue ${key} has total worklogs exceeding 16 hours.`);
+    }
 
     (worklog.worklogs || []).forEach((log) => {
       const logUpdated = DateTime.fromISO(log.updated);
@@ -160,14 +207,9 @@ function checkWorklogConditions(issues, updatedSince) {
         if (!log.comment) {
           alerts.push(`Issue ${key} has a worklog without a comment.`);
         }
-
-        if (log.timeSpentSeconds > 57600) {
-          // 16 hours in seconds
-          alerts.push(`Issue ${key} has a worklog exceeding 16 hours.`);
-        }
       }
     });
-  });
+  }
 
   console.log("Worklog condition checks complete. Alerts:", alerts);
   return alerts;

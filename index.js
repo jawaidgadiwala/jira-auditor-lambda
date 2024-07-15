@@ -24,7 +24,7 @@ exports.handler = async (event, context) => {
     const worklogIssues = await getWorklogUpdates(lastRunTime.toISO());
     const statusIssues = await getStatusTransitions(lastRunTime.toISO());
 
-    const worklogAlerts = checkWorklogConditions(
+    const worklogAlerts = await checkWorklogConditions(
       worklogIssues,
       lastRunTime.toISO()
     );
