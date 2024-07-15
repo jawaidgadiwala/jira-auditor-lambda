@@ -1,5 +1,6 @@
 const axios = require("axios");
 const { DateTime } = require("luxon");
+const { getMinutesSinceLastRun } = require("./time");
 require("dotenv").config();
 
 const { JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN } = process.env;
@@ -11,19 +12,13 @@ const jiraHeaders = {
   "Content-Type": "application/json",
 };
 
-async function getWorklogUpdates(updatedSince) {
+async function getWorklogUpdates(lastRunTime) {
   try {
-    const minutesSinceLastRun = Math.round(
-      (DateTime.utc().toMillis() - DateTime.fromISO(updatedSince).toMillis()) /
-        60000
-    );
-    const formattedDate = `-${minutesSinceLastRun}m`;
-    console.log(`Fetching worklog updates since: ${formattedDate}`);
-
+    const minutesSinceLastRun = getMinutesSinceLastRun(lastRunTime);
     const response = await axios.get(`${JIRA_URL}/rest/api/3/search`, {
       headers: jiraHeaders,
       params: {
-        jql: `worklogDate >= "${formattedDate}"`,
+        jql: `worklogDate >= "${minutesSinceLastRun}"`,
         fields: "summary,comment,worklog,status,project,parent",
         expand: "changelog",
         maxResults: 1000,
@@ -40,19 +35,13 @@ async function getWorklogUpdates(updatedSince) {
   }
 }
 
-async function getStatusTransitions(updatedSince) {
+async function getStatusTransitions(lastRunTime) {
   try {
-    const minutesSinceLastRun = Math.round(
-      (DateTime.utc().toMillis() - DateTime.fromISO(updatedSince).toMillis()) /
-        60000
-    );
-    const formattedDate = `-${minutesSinceLastRun}m`;
-    console.log(`Fetching status transitions since: ${formattedDate}`);
-
+    const minutesSinceLastRun = getMinutesSinceLastRun(lastRunTime);
     const response = await axios.get(`${JIRA_URL}/rest/api/3/search`, {
       headers: jiraHeaders,
       params: {
-        jql: `status changed to ("Done", "Ready for QA") after "${formattedDate}"`,
+        jql: `status changed to ("Done", "Ready for QA") after "${minutesSinceLastRun}"`,
         fields: "summary,status,project,parent",
         expand: "changelog",
         maxResults: 1000,
@@ -179,9 +168,8 @@ async function checkStatusConditions(issues) {
   return alerts;
 }
 
-async function checkWorklogConditions(issues, updatedSince) {
+async function checkWorklogConditions(issues, lastRunTime) {
   const alerts = [];
-  const updatedSinceDateTime = DateTime.fromISO(updatedSince);
   console.log("Checking worklog conditions...");
 
   for (const issue of issues) {
@@ -196,14 +184,13 @@ async function checkWorklogConditions(issues, updatedSince) {
       0
     );
 
-    if (totalTimeSpentSeconds > 57600) {
-      alerts.push(`Issue ${key} has total worklogs exceeding 16 hours.`);
-    }
-
     (worklog.worklogs || []).forEach((log) => {
       const logUpdated = DateTime.fromISO(log.updated);
+      if (logUpdated >= lastRunTime) {
+        if (totalTimeSpentSeconds > 16 * 60 * 60) {
+          alerts.push(`Issue ${key} has total worklogs exceeding 16 hours.`);
+        }
 
-      if (logUpdated >= updatedSinceDateTime) {
         if (!log.comment) {
           alerts.push(`Issue ${key} has a worklog without a comment.`);
         }

@@ -1,8 +1,14 @@
-const { getLastRunTime, updateLastRunTime } = require("./s3");
+const {
+  getLastRunTime,
+  updateLastRunTime,
+  getOffsetDuration,
+  getCurrentTime,
+} = require("./time");
 const {
   getWorklogUpdates,
   getStatusTransitions,
   getProjectLead,
+  getDevelopmentData,
   checkWorklogConditions,
   checkStatusConditions,
 } = require("./jira");
@@ -16,34 +22,30 @@ const { SES_EMAIL_TO } = process.env;
 exports.handler = async (event, context) => {
   try {
     const lastRunTime = await getLastRunTime();
-    const currentTime = DateTime.utc();
+    const currentTime = getCurrentTime();
 
     console.log(`Last run time: ${lastRunTime.toISO()}`);
     console.log(`Current time: ${currentTime.toISO()}`);
 
-    const worklogIssues = await getWorklogUpdates(lastRunTime.toISO());
-    const statusIssues = await getStatusTransitions(lastRunTime.toISO());
+    const worklogIssues = await getWorklogUpdates(lastRunTime);
+    const statusIssues = await getStatusTransitions(lastRunTime);
 
     const worklogAlerts = await checkWorklogConditions(
       worklogIssues,
-      lastRunTime.toISO()
+      lastRunTime
     );
     const statusAlerts = await checkStatusConditions(statusIssues);
-    console.log(statusAlerts);
 
     const alerts = [...worklogAlerts, ...statusAlerts];
 
     if (alerts.length > 0) {
       if (SES_EMAIL_TO) {
-        // Send email to the fixed recipient
         if (isDebugMode()) {
           logAlerts(alerts);
         } else {
-          logAlerts(alerts);
           await sendEmail(alerts, SES_EMAIL_TO);
         }
       } else {
-        // Send email to project lead
         const projectKeys = new Set(
           alerts
             .map((alert) => alert.project && alert.project.key)
@@ -54,7 +56,6 @@ exports.handler = async (event, context) => {
           if (isDebugMode()) {
             logAlerts(alerts);
           } else {
-            logAlerts(alerts);
             await sendEmail(alerts, projectLeadEmail);
           }
         }
