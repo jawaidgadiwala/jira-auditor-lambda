@@ -1,12 +1,16 @@
-const AWS = require("aws-sdk");
+const {
+  S3Client,
+  GetObjectCommand,
+  PutObjectCommand,
+} = require("@aws-sdk/client-s3");
 const { DateTime } = require("luxon");
 const fs = require("fs").promises;
 require("dotenv").config();
 const { isDebugMode } = require("./utils");
 
-const { S3_BUCKET, S3_KEY } = process.env;
+const { S3_BUCKET, S3_KEY, AWS_REGION } = process.env;
 
-const s3 = new AWS.S3();
+const s3Client = new S3Client({ region: AWS_REGION });
 
 async function getLastRunTime() {
   if (isDebugMode()) {
@@ -19,13 +23,13 @@ async function getLastRunTime() {
     }
   } else {
     try {
-      const response = await s3
-        .getObject({ Bucket: S3_BUCKET, Key: S3_KEY })
-        .promise();
-      const lastRunTime = JSON.parse(response.Body.toString());
+      const command = new GetObjectCommand({ Bucket: S3_BUCKET, Key: S3_KEY });
+      const response = await s3Client.send(command);
+      const body = await streamToString(response.Body);
+      const lastRunTime = JSON.parse(body);
       return DateTime.fromISO(lastRunTime.last_run);
     } catch (err) {
-      if (err.code === "NoSuchKey") {
+      if (err.name === "NoSuchKey") {
         return DateTime.utc().minus({ hours: 1 });
       }
       throw err;
@@ -36,12 +40,24 @@ async function getLastRunTime() {
 async function updateLastRunTime(currentTime) {
   const body = JSON.stringify({ last_run: currentTime.toISO() });
   if (isDebugMode()) {
-    await fs.writeFile(S3_KEY, body, "utf8");
+    // await fs.writeFile(S3_KEY, body, "utf8");
   } else {
-    await s3
-      .putObject({ Bucket: S3_BUCKET, Key: S3_KEY, Body: body })
-      .promise();
+    const command = new PutObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: S3_KEY,
+      Body: body,
+    });
+    await s3Client.send(command);
   }
+}
+
+function streamToString(stream) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on("data", (chunk) => chunks.push(chunk));
+    stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    stream.on("error", reject);
+  });
 }
 
 module.exports = { getLastRunTime, updateLastRunTime };

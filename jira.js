@@ -24,7 +24,7 @@ async function getWorklogUpdates(updatedSince) {
       headers: jiraHeaders,
       params: {
         jql: `worklogDate >= "${formattedDate}"`,
-        fields: "summary,comment,worklog,status,development,project",
+        fields: "summary,comment,worklog,status,project,parent",
         expand: "changelog",
         maxResults: 1000,
       },
@@ -53,7 +53,7 @@ async function getStatusTransitions(updatedSince) {
       headers: jiraHeaders,
       params: {
         jql: `status changed to ("Done", "Ready for QA") after "${formattedDate}"`,
-        fields: "summary,status,development,project",
+        fields: "summary,status,project,parent",
         expand: "changelog",
         maxResults: 1000,
       },
@@ -87,13 +87,71 @@ async function getProjectLead(projectKey) {
   }
 }
 
+async function getDevelopmentData(issueId) {
+  try {
+    const response = await axios.get(
+      `${JIRA_URL}/rest/dev-status/latest/issue/summary`,
+      {
+        headers: jiraHeaders,
+        params: {
+          issueId: issueId,
+        },
+      }
+    );
+    return response.data.summary;
+  } catch (error) {
+    console.error(
+      `Error fetching development data for issue ${issueId}:`,
+      error.response ? error.response.data : error.message
+    );
+    return null; // Return null in case of error
+  }
+}
+
+async function checkStatusConditions(issues) {
+  const alerts = [];
+  console.log("Checking status conditions...");
+
+  for (const issue of issues) {
+    const { id, key, fields } = issue;
+    const { status, parent } = fields;
+
+    console.log(`Processing issue ${key} with status ${status.name}...`);
+
+    if (["Done", "Ready for QA"].includes(status.name)) {
+      let developmentData = await getDevelopmentData(id);
+      let hasDevelopment = developmentData?.branch?.overall?.count > 0;
+
+      if (!hasDevelopment && parent) {
+        console.log(`Fetching parent issue development data for ${key}...`);
+        const parentDevelopmentData = await getDevelopmentData(parent.id);
+        if (parentDevelopmentData?.branch?.overall?.count > 0) {
+          hasDevelopment = true;
+        }
+      }
+
+      if (!hasDevelopment) {
+        alerts.push(
+          `Issue ${key} moved to ${status.name} without a linked branch, commit, or PR.`
+        );
+      }
+    }
+  }
+
+  console.log("Status condition checks complete. Alerts:", alerts);
+  return alerts;
+}
+
 function checkWorklogConditions(issues, updatedSince) {
   const alerts = [];
   const updatedSinceDateTime = DateTime.fromISO(updatedSince);
+  console.log("Checking worklog conditions...");
 
   issues.forEach((issue) => {
     const { key, fields } = issue;
     const { worklog } = fields;
+
+    console.log(`Processing issue ${key} with worklogs...`);
 
     (worklog.worklogs || []).forEach((log) => {
       const logUpdated = DateTime.fromISO(log.updated);
@@ -111,21 +169,7 @@ function checkWorklogConditions(issues, updatedSince) {
     });
   });
 
-  return alerts;
-}
-
-function checkStatusConditions(issues) {
-  const alerts = [];
-  issues.forEach((issue) => {
-    const { key, fields } = issue;
-    const { status, development } = fields;
-
-    if (["Done", "Ready for QA"].includes(status.name) && !development) {
-      alerts.push(
-        `Issue ${key} moved to ${status.name} without a linked branch, commit, or PR.`
-      );
-    }
-  });
+  console.log("Worklog condition checks complete. Alerts:", alerts);
   return alerts;
 }
 
@@ -133,6 +177,7 @@ module.exports = {
   getWorklogUpdates,
   getStatusTransitions,
   getProjectLead,
+  getDevelopmentData,
   checkWorklogConditions,
   checkStatusConditions,
 };

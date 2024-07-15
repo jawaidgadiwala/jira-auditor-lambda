@@ -1,8 +1,8 @@
-const AWS = require("aws-sdk");
+const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
 require("dotenv").config();
 const { isDebugMode } = require("./utils");
 
-const ses = new AWS.SES({ region: process.env.AWS_REGION });
+const sesClient = new SESClient({ region: process.env.AWS_REGION });
 
 const { SES_EMAIL_FROM, SES_EMAIL_BCC, SES_EMAIL_TO } = process.env;
 
@@ -43,7 +43,8 @@ async function sendEmail(alerts, recipientEmail) {
       },
     },
   };
-  await ses.sendEmail(params).promise();
+  const command = new SendEmailCommand(params);
+  await sesClient.send(command);
 }
 
 function logAlerts(alerts) {

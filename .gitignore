@@ -132,3 +132,7 @@ dist
 # custom config
 *.zip
 last_run_time.json
+
+
+# "@aws-sdk/client-s3": "^3.283.0",
+# "@aws-sdk/client-ses": "^3.283.0"

@@ -28,7 +28,8 @@ exports.handler = async (event, context) => {
       worklogIssues,
       lastRunTime.toISO()
     );
-    const statusAlerts = checkStatusConditions(statusIssues);
+    const statusAlerts = await checkStatusConditions(statusIssues);
+    console.log(statusAlerts);
 
     const alerts = [...worklogAlerts, ...statusAlerts];
 
@@ -38,6 +39,7 @@ exports.handler = async (event, context) => {
         if (isDebugMode()) {
           logAlerts(alerts);
         } else {
+          logAlerts(alerts);
           await sendEmail(alerts, SES_EMAIL_TO);
         }
       } else {
@@ -52,6 +54,7 @@ exports.handler = async (event, context) => {
           if (isDebugMode()) {
             logAlerts(alerts);
           } else {
+            logAlerts(alerts);
             await sendEmail(alerts, projectLeadEmail);
           }
         }
