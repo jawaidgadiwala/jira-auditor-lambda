@@ -34,7 +34,7 @@ async function sendEmail(alerts, recipientEmail) {
     },
     Message: {
       Subject: {
-        Data: "Jira Automation Alerts",
+        Data: "Jira Audit Alerts",
       },
       Body: {
         Text: {
