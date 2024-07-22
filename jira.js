@@ -1,6 +1,6 @@
 const axios = require("axios");
 const { DateTime } = require("luxon");
-const { getMinutesSinceLastRun } = require("./time");
+const { getMinutesSinceLastRun, getTimeZone } = require("./time");
 require("dotenv").config();
 
 const { JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN } = process.env;
@@ -19,13 +19,58 @@ async function getWorklogUpdates(lastRunTime) {
       headers: jiraHeaders,
       params: {
         jql: `worklogDate >= "${minutesSinceLastRun}"`,
-        fields: "summary,comment,worklog,status,project,parent",
+        fields:
+          "summary,comment,worklog,status,project,parent,customfield_10049",
         expand: "changelog",
         maxResults: 1000,
       },
     });
 
-    return response.data.issues;
+    const issues = response.data.issues;
+
+    const alerts = await checkWorklogConditions(issues, lastRunTime);
+    return alerts;
+
+    // const alerts = {};
+
+    // issues.forEach((issue) => {
+    //   const { key, fields } = issue;
+    //   const { worklog, project } = fields;
+
+    //   if (!alerts[project.key]) {
+    //     alerts[project.key] = [];
+    //   }
+
+    //   const allWorklogs = worklog.worklogs || [];
+    //   const totalTimeSpentSeconds = allWorklogs.reduce(
+    //     (acc, log) => acc + log.timeSpentSeconds,
+    //     0
+    //   );
+
+    //   allWorklogs.forEach((log) => {
+    //     const logUpdated = DateTime.fromISO(log.updated).setZone(getTimeZone());
+    //     if (logUpdated >= lastRunTime) {
+    //       if (totalTimeSpentSeconds > 16 * 60 * 60) {
+    //         alerts[project.key].push({
+    //           projectKey: project.key,
+    //           alertType: "worklogExceeding16Hours",
+    //           issueKey: key,
+    //           alertMessage: `Issue ${key} has total worklogs exceeding 16 hours.`,
+    //         });
+    //       }
+    //       if (!log.comment) {
+    //         alerts[project.key].push({
+    //           projectKey: project.key,
+    //           alertType: "worklogCommentMissing",
+    //           issueKey: key,
+    //           alertMessage: `Issue ${key} has a worklog without a comment.`,
+    //         });
+    //       }
+    //     }
+    //   });
+    // });
+
+    // return alerts;
   } catch (error) {
     console.error(
       "Error fetching Jira worklog updates:",
@@ -35,20 +80,70 @@ async function getWorklogUpdates(lastRunTime) {
   }
 }
 
-async function getStatusTransitions(lastRunTime) {
+async function getStatusTransitionUpdates(lastRunTime) {
   try {
     const minutesSinceLastRun = getMinutesSinceLastRun(lastRunTime);
     const response = await axios.get(`${JIRA_URL}/rest/api/3/search`, {
       headers: jiraHeaders,
       params: {
-        jql: `status changed to ("Done", "Ready for QA") after "${minutesSinceLastRun}"`,
-        fields: "summary,status,project,parent",
+        jql: `status changed to ("In Progress", "Done", "Ready for QA") after "${minutesSinceLastRun}"`, // Include "In Progress"
+        fields: "summary,status,project,parent,customfield_10049",
         expand: "changelog",
         maxResults: 1000,
       },
     });
 
-    return response.data.issues;
+    const issues = response.data.issues;
+    const alert = await checkStatusTransitionConditions(issues, lastRunTime);
+    return alert;
+
+    // const alerts = {};
+
+    // issues.forEach((issue) => {
+    //   const { key, fields } = issue;
+    //   const {
+    //     status,
+    //     parent,
+    //     project,
+    //     customfield_10049: storyPoints,
+    //   } = fields;
+
+    //   if (!alerts[project.key]) {
+    //     alerts[project.key] = [];
+    //   }
+
+    //   if (["In Progress", "Done", "Ready for QA"].includes(status.name)) {
+    //     let hasDevelopment = fields.development
+    //       ? fields.development.length > 0
+    //       : false;
+
+    //     if (!hasDevelopment && parent) {
+    //       hasDevelopment = parent.fields.development
+    //         ? parent.fields.development.length > 0
+    //         : false;
+    //     }
+
+    //     if (!hasDevelopment) {
+    //       alerts[project.key].push({
+    //         projectKey: project.key,
+    //         issueKey: key,
+    //         alertType: "noDevelopmentLink",
+    //         alertMessage: `Issue ${key} moved to ${status.name} without a linked branch, commit, or PR.`,
+    //       });
+    //     }
+
+    //     if (!storyPoints) {
+    //       alerts[project.key].push({
+    //         projectKey: project.key,
+    //         issueKey: key,
+    //         alertType: "storyPointsMissing",
+    //         alertMessage: `Issue ${key} moved to ${status.name} without story points.`,
+    //       });
+    //     }
+    //   }
+    // });
+
+    // return alerts;
   } catch (error) {
     console.error(
       "Error fetching Jira status transitions:",
@@ -58,15 +153,28 @@ async function getStatusTransitions(lastRunTime) {
   }
 }
 
-async function getProjectLead(projectKey) {
+async function getProjectInfo(projectKey) {
   try {
-    const response = await axios.get(
+    const projectResponse = await axios.get(
       `${JIRA_URL}/rest/api/3/project/${projectKey}`,
       {
         headers: jiraHeaders,
       }
     );
-    return response.data.lead.emailAddress;
+    const leadAccountId = projectResponse.data.lead.accountId;
+
+    const userResponse = await axios.get(`${JIRA_URL}/rest/api/3/user`, {
+      headers: jiraHeaders,
+      params: {
+        accountId: leadAccountId,
+      },
+    });
+
+    return {
+      leadEmail: userResponse.data.emailAddress,
+      leadName: userResponse.data.displayName,
+      projectName: projectResponse.data.name,
+    };
   } catch (error) {
     console.error(
       "Error fetching project lead:",
@@ -134,17 +242,17 @@ async function getAllWorklogs(issueId) {
   }
 }
 
-async function checkStatusConditions(issues) {
+async function checkStatusTransitionConditions(issues) {
   const alerts = [];
   console.log("Checking status conditions...");
 
   for (const issue of issues) {
     const { id, key, fields } = issue;
-    const { status, parent } = fields;
+    const { status, parent, customfield_10049: storyPoints, project } = fields;
 
     console.log(`Processing issue ${key} with status ${status.name}...`);
 
-    if (["Done", "Ready for QA"].includes(status.name)) {
+    if (["In Progress", "Done", "Ready for QA"].includes(status.name)) {
       let developmentData = await getDevelopmentData(id);
       let hasDevelopment = developmentData?.branch?.overall?.count > 0;
 
@@ -157,14 +265,26 @@ async function checkStatusConditions(issues) {
       }
 
       if (!hasDevelopment) {
-        alerts.push(
-          `Issue ${key} moved to ${status.name} without a linked branch, commit, or PR.`
-        );
+        alerts.push({
+          projectKey: project.key,
+          issueKey: key,
+          alertType: "noDevelopmentLink",
+          alertMessage: `Issue ${key} moved to ${status.name} without a linked branch, commit, or PR.`,
+        });
+      }
+
+      if (!storyPoints) {
+        alerts.push({
+          projectKey: project.key,
+          issueKey: key,
+          alertType: "storyPointsMissing",
+          alertMessage: `Issue ${key} moved to ${status.name} without story points.`,
+        });
       }
     }
   }
 
-  console.log("Status condition checks complete. Alerts:", alerts);
+  // console.log("Status condition checks complete. Alerts:", alerts);
   return alerts;
 }
 
@@ -174,7 +294,7 @@ async function checkWorklogConditions(issues, lastRunTime) {
 
   for (const issue of issues) {
     const { id, key, fields } = issue;
-    const { worklog } = fields;
+    const { worklog, project } = fields;
 
     console.log(`Processing issue ${key} with worklogs...`);
 
@@ -185,28 +305,38 @@ async function checkWorklogConditions(issues, lastRunTime) {
     );
 
     (worklog.worklogs || []).forEach((log) => {
-      const logUpdated = DateTime.fromISO(log.updated);
+      const logUpdated = DateTime.fromISO(log.updated).setZone(getTimeZone());
       if (logUpdated >= lastRunTime) {
         if (totalTimeSpentSeconds > 16 * 60 * 60) {
-          alerts.push(`Issue ${key} has total worklogs exceeding 16 hours.`);
+          alerts.push({
+            projectKey: project.key,
+            issueKey: key,
+            alertType: "worklogExceeding16Hours",
+            alertMessage: `Issue ${key} has total worklogs exceeding 16 hours.`,
+          });
         }
 
         if (!log.comment) {
-          alerts.push(`Issue ${key} has a worklog without a comment.`);
+          alerts.push({
+            projectKey: project.key,
+            issueKey: key,
+            alertType: "worklogCommentMissing",
+            alertMessage: `Issue ${key} has a worklog without a comment.`,
+          });
         }
       }
     });
   }
 
-  console.log("Worklog condition checks complete. Alerts:", alerts);
+  // console.log("Worklog condworklogAlertsition checks complete. Alerts:", alerts);
   return alerts;
 }
 
 module.exports = {
   getWorklogUpdates,
-  getStatusTransitions,
-  getProjectLead,
+  getStatusTransitionUpdates,
+  getProjectInfo,
   getDevelopmentData,
   checkWorklogConditions,
-  checkStatusConditions,
+  checkStatusTransitionConditions,
 };

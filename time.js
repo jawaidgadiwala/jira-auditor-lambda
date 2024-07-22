@@ -55,7 +55,9 @@ async function getLastRunTime() {
 }
 
 async function updateLastRunTime(currentTime) {
-  const body = JSON.stringify({ last_run: currentTime.toISO() });
+  const body = JSON.stringify({
+    last_run: currentTime.setZone(getTimeZone()).toISO(),
+  });
 
   if (isDebugMode()) {
     await fs.writeFile(S3_KEY, body, "utf8");
@@ -94,6 +96,7 @@ function streamToString(stream) {
 }
 
 module.exports = {
+  getTimeZone,
   getCurrentTime,
   getLastRunTime,
   updateLastRunTime,

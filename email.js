@@ -4,7 +4,7 @@ const { isDebugMode } = require("./utils");
 
 const sesClient = new SESClient({ region: process.env.AWS_REGION });
 
-const { SES_EMAIL_FROM, SES_EMAIL_BCC, SES_EMAIL_TO } = process.env;
+const { SES_EMAIL_FROM, SES_EMAIL_BCC } = process.env;
 
 function validateEnvVariables() {
   if (!SES_EMAIL_FROM) {
@@ -23,7 +23,8 @@ function validateEnvVariables() {
   return bccAddresses;
 }
 
-async function sendEmail(alerts, recipientEmail) {
+async function sendEmail(emailContent, recipientEmail) {
+  console.log(emailContent);
   const bccAddresses = validateEnvVariables();
 
   const params = {
@@ -37,14 +38,18 @@ async function sendEmail(alerts, recipientEmail) {
         Data: "Jira Audit Alerts",
       },
       Body: {
-        Text: {
-          Data: alerts.join("\n"),
+        Html: {
+          Data: emailContent,
         },
       },
     },
   };
-  const command = new SendEmailCommand(params);
-  await sesClient.send(command);
+  if (!isDebugMode()) {
+    const command = new SendEmailCommand(params);
+    await sesClient.send(command);
+  } else {
+    console.log("EMAIL:", JSON.stringify(params, null, 2));
+  }
 }
 
 function logAlerts(alerts) {
